@@ -91,6 +91,11 @@ an exact full entry, then an exact word of an entry (a surname), then a typo-tol
 several entries match equally well, the one **listed first** wins, so list the important ones first
 (for example drivers ordered by career length).
 
+`Model.Link(slotType, text)` exposes the same lookup directly, with a match cost. Because `Parse` links a slot
+only within the type the tagger chose, a caller whose sentence frames fit several types ("how many wins did X
+have" fits drivers and teams) can link a mention against every type and let the *name* decide; the cost makes
+the candidates comparable.
+
 ## Example 3: a real benchmark corpus
 
 Train on the 13,784-utterance [SNIPS](https://github.com/snipsco/nlu-benchmark)

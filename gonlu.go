@@ -109,3 +109,16 @@ func (m *Model) Parse(text string) Result {
 	}
 	return res
 }
+
+// Link resolves text to the closest value in Options.Entries for the given slot
+// type, the same lookup Parse uses to fill Slot.Entry. It also returns the match
+// cost, lower being better: 0 for an exact full entry, 1 for an exact word of an
+// entry (a surname), then 2 and 3 for the same with a typo (each edit adds 2).
+// ok is false when the type has no entries or nothing is close enough.
+//
+// Parse links a slot only within the type the tagger chose. Link lets a caller
+// compare several types and let the name itself decide, which is more reliable
+// than the tagger's guess when a sentence frame fits more than one type.
+func (m *Model) Link(slotType, text string) (entry string, cost int, ok bool) {
+	return m.link.best(slotType, strings.TrimSpace(strings.ToLower(text)))
+}

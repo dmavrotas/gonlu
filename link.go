@@ -58,27 +58,38 @@ func maxEdits(n int) int {
 // Preference order: exact full entry, exact word of an entry, typo-tolerant
 // full entry, typo-tolerant word of an entry; ties go to the earlier entry.
 func (l *linker) link(label, text string) string {
+	entry, _, _ := l.best(label, text)
+	return entry
+}
+
+// best is link plus the match cost (see entryCost); ok is false when nothing is
+// close enough.
+func (l *linker) best(label, text string) (entry string, cost int, ok bool) {
 	cands := l.byType[lastPart(label)]
 	if len(cands) == 0 || text == "" {
-		return ""
+		return "", 0, false
 	}
 	budget := maxEdits(len(text))
-	best, bestCost := "", 1<<30
+	bestCost := noMatch
 	for _, e := range cands {
-		cost := entryCost(e, text, budget)
-		if cost < bestCost {
-			best, bestCost = e.value, cost
+		if c := entryCost(e, text, budget); c < bestCost {
+			entry, bestCost = e.value, c
 		}
 	}
-	return best
+	if bestCost == noMatch {
+		return "", 0, false
+	}
+	return entry, bestCost, true
 }
+
+// noMatch is the cost of an entry that is not close enough.
+const noMatch = 1 << 30
 
 // entryCost scores how well text matches an entry (lower is better, large is
 // no match). Full-entry matches cost 2*d, word matches 2*d+1, so an exact full
 // entry beats an exact word, which beats any one-typo match.
 func entryCost(e linkEntry, text string, budget int) int {
-	const none = 1 << 30
-	cost := none
+	cost := noMatch
 	if d := editDistance(text, e.norm); d <= budget {
 		cost = 2 * d
 	}

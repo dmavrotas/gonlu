@@ -82,3 +82,43 @@ func TestParseLinksSlotsToEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestModelLink(t *testing.T) {
+	m, err := Train(trainingData(), Options{Entries: map[string][]string{
+		"driver": {"Lewis Hamilton", "Max Verstappen"},
+		"team":   {"Ferrari", "Red Bull"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, typ, text string
+		wantEntry       string
+		wantOK          bool
+		wantCost        int
+	}{
+		{"exact full entry", "driver", "lewis hamilton", "Lewis Hamilton", true, 0},
+		{"exact word of an entry", "driver", "hamilton", "Lewis Hamilton", true, 1},
+		{"typo", "team", "ferari", "Ferrari", true, 2},
+		{"wrong type finds nothing", "driver", "ferari", "", false, 0},
+		{"unknown type", "circuit", "monza", "", false, 0},
+		{"nothing close", "driver", "zzzzzz", "", false, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry, cost, ok := m.Link(tt.typ, tt.text)
+			if entry != tt.wantEntry || ok != tt.wantOK || (ok && cost != tt.wantCost) {
+				t.Errorf("Link(%q, %q) = (%q, %d, %v), want (%q, %d, %v)", tt.typ, tt.text, entry, cost, ok, tt.wantEntry, tt.wantCost, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestLinkCostOrdersMatchQuality(t *testing.T) {
+	m, _ := Train(trainingData(), Options{Entries: map[string][]string{"driver": {"Lewis Hamilton"}, "team": {"Hamilton Racing"}}})
+	_, driverCost, _ := m.Link("driver", "hamilton") // an exact word of a driver entry
+	_, teamCost, _ := m.Link("team", "hamiltn")      // a typo of a team word
+	if driverCost >= teamCost {
+		t.Errorf("exact word (cost %d) should beat a typo (cost %d)", driverCost, teamCost)
+	}
+}
