@@ -16,7 +16,10 @@ import (
 	"github.com/dmavrotas/gonlu/bench/metrics"
 	"github.com/dmavrotas/gonlu/intent"
 	"github.com/dmavrotas/gonlu/nlu"
+	"github.com/dmavrotas/gonlu/slot"
 )
+
+const slotEpochs = 10
 
 const (
 	atisBase  = "https://raw.githubusercontent.com/yvchen/JointSLU/master/data/"
@@ -35,6 +38,7 @@ func main() {
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	dir := fs.String("dir", "data", "dataset directory")
+	typo := fs.Float64("typo", 0, "fraction of test words to corrupt with typos (robustness check)")
 	_ = fs.Parse(os.Args[2:])
 
 	var err error
@@ -42,7 +46,7 @@ func main() {
 	case "fetch":
 		err = fetch(*dir)
 	case "run":
-		err = run(*dir)
+		err = run(*dir, *typo)
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -53,7 +57,7 @@ func main() {
 }
 
 func download(url, dst string) error {
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := os.Stat(dst); err == nil { //nolint:gosec // dst is built from the -dir flag and fixed names
 		return nil
 	}
 	resp, err := http.Get(url) //nolint:gosec // fixed benchmark URLs
@@ -64,10 +68,10 @@ func download(url, dst string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s: %s", url, resp.Status)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil { //nolint:gosec // dst is built from the -dir flag and fixed names
 		return err
 	}
-	f, err := os.Create(dst)
+	f, err := os.Create(dst) //nolint:gosec // dst is built from the -dir flag and fixed names
 	if err != nil {
 		return err
 	}
@@ -94,7 +98,7 @@ func fetch(dir string) error {
 }
 
 func load(path string, parse func(io.Reader) ([]nlu.Utterance, error)) ([]nlu.Utterance, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path is built from the -dir flag and fixed names
 	if err != nil {
 		return nil, fmt.Errorf("%w (run `nlubench fetch` first)", err)
 	}
@@ -114,7 +118,7 @@ func loadSnips(dir, prefix, suffix string) ([]nlu.Utterance, error) {
 	return all, nil
 }
 
-func run(dir string) error {
+func run(dir string, typo float64) error {
 	atisTrain, err := load(filepath.Join(dir, "atis", atisFiles[0]), dataset.ParseATIS)
 	if err != nil {
 		return err
@@ -131,7 +135,11 @@ func run(dir string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%-8s %6s %6s %12s\n", "dataset", "train", "test", "intent-acc")
+	if typo > 0 {
+		atisTest, snipsTest = dataset.Perturb(atisTest, typo, 7), dataset.Perturb(snipsTest, typo, 7)
+		fmt.Printf("test words corrupted at rate %.2f\n", typo)
+	}
+	fmt.Printf("%-8s %-12s %6s %6s %11s %8s %9s\n", "dataset", "intent-model", "train", "test", "intent-acc", "slot-F1", "frame-acc")
 	report("ATIS", atisTrain, atisTest)
 	report("SNIPS", snipsTrain, snipsTest)
 	return nil
@@ -142,11 +150,28 @@ func report(name string, train, test []nlu.Utterance) {
 	for i, u := range train {
 		ex[i] = intent.Example{Tokens: u.Tokens, Label: u.Intent}
 	}
-	nb := intent.TrainNaiveBayes(ex)
-	var got, want []string
+	tagger := slot.Train(train, slotEpochs)
+	gotS, wantS := make([][]nlu.Span, 0, len(test)), make([][]nlu.Span, 0, len(test))
+	wantI := make([]string, 0, len(test))
 	for _, u := range test {
-		l, _ := nb.Predict(u.Tokens)
-		got, want = append(got, l), append(want, u.Intent)
+		gotS, wantS, wantI = append(gotS, tagger.Tag(u.Tokens)), append(wantS, u.Slots), append(wantI, u.Intent)
 	}
-	fmt.Printf("%-8s %6d %6d %11.2f%%\n", name, len(train), len(test), 100*metrics.Accuracy(got, want))
+	slotF1 := 100 * metrics.SlotF1(gotS, wantS).F1
+
+	models := []struct {
+		name string
+		clf  intent.Classifier
+	}{
+		{"logreg", intent.TrainLogReg(ex, intent.LogRegOptions{})},
+		{"logreg+char3", intent.TrainLogReg(ex, intent.LogRegOptions{CharN: 3})},
+	}
+	for _, m := range models {
+		gotI := make([]string, 0, len(test))
+		for _, u := range test {
+			l, _ := m.clf.Predict(u.Tokens)
+			gotI = append(gotI, l)
+		}
+		fmt.Printf("%-8s %-12s %6d %6d %10.2f%% %7.2f%% %8.2f%%\n", name, m.name, len(train), len(test),
+			100*metrics.Accuracy(gotI, wantI), slotF1, 100*metrics.FrameAccuracy(gotI, wantI, gotS, wantS))
+	}
 }
