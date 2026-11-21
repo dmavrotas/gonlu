@@ -28,14 +28,31 @@ type LogRegOptions struct {
 	// L2-normalises every utterance's feature vector, instead of using binary
 	// features. It usually helps on many-class problems.
 	TFIDF bool
+	// ClassBalance is the exponent alpha of class-balanced loss weighting: an
+	// example of class c is weighted (N / (K*n_c))^alpha, where N is the number
+	// of examples, K the number of classes and n_c the size of class c. 0 turns
+	// it off, 1 is fully balanced. It counters a dominant class swallowing rare
+	// ones on imbalanced data (as in ATIS).
+	ClassBalance float64
+	// NormPower controls how strongly TF-IDF rows are length-normalised: each
+	// row is divided by ||x||^NormPower. 0 selects the default of 1 (full L2
+	// normalisation); a negative value disables normalisation (IDF weights
+	// only). Smaller powers keep a decisive word from being diluted by a long
+	// utterance. It has no effect unless TFIDF is set.
+	NormPower float64
 }
 
 // DefaultOptions returns the recommended configuration: TF-IDF weighting with
-// word uni/bigrams plus character trigrams. On the dev splits of ATIS, SNIPS,
-// MASSIVE, CLINC150 and BANKING77 it was never worse than the zero-value
-// LogRegOptions (binary word features) and up to 8.5 points better.
+// word uni/bigrams plus character trigrams, learning rate 0.25 and
+// square-root class balancing.
+//
+// Against the zero-value LogRegOptions (binary word features) it is better on
+// the dev splits of ATIS, MASSIVE, CLINC150 and BANKING77 (up to +8.5 points) and
+// within 0.2 on SNIPS, but it is 1.3 points worse on the ATIS test set, where
+// the test distribution differs from train and a dominant class swallows rare
+// intents. See the README's method notes.
 func DefaultOptions() LogRegOptions {
-	return LogRegOptions{TFIDF: true, LearningRate: 0.1, CharN: 3}
+	return LogRegOptions{TFIDF: true, LearningRate: 0.25, CharN: 3, ClassBalance: 0.5}
 }
 
 // RobustOptions is DefaultOptions plus typo-augmented training data, for
@@ -102,10 +119,14 @@ func (m *LogReg) row(tokens []string) row {
 		r.vals[i] = v
 		norm += v * v
 	}
-	if m.idf != nil && norm > 0 {
-		norm = math.Sqrt(norm)
+	if m.idf != nil && norm > 0 && m.opts.NormPower >= 0 {
+		pow := m.opts.NormPower
+		if pow == 0 {
+			pow = 1
+		}
+		div := math.Pow(math.Sqrt(norm), pow)
 		for i := range r.vals {
-			r.vals[i] /= norm
+			r.vals[i] /= div
 		}
 	}
 	return r
@@ -177,6 +198,19 @@ func TrainLogReg(examples []Example, opts LogRegOptions) *LogReg {
 	for i, e := range examples {
 		rows[i], gold[i] = m.row(e.Tokens), labelIdx[e.Label]
 	}
+	classWeight := make([]float64, len(m.labels))
+	for l := range classWeight {
+		classWeight[l] = 1
+	}
+	if opts.ClassBalance > 0 {
+		counts := make([]float64, len(m.labels))
+		for _, g := range gold {
+			counts[g]++
+		}
+		for l, c := range counts {
+			classWeight[l] = math.Pow(float64(len(examples))/(float64(len(m.labels))*c), opts.ClassBalance)
+		}
+	}
 	rng := rand.New(rand.NewSource(1)) //nolint:gosec // reproducible shuffling, not security
 	order := rng.Perm(len(examples))
 	const eps = 1e-8
@@ -189,6 +223,7 @@ func TrainLogReg(examples []Example, opts LogRegOptions) *LogReg {
 				if l == gold[i] {
 					g--
 				}
+				g *= classWeight[gold[i]]
 				biasAcc[l] += g * g
 				m.bias[l] -= opts.LearningRate * g / (math.Sqrt(biasAcc[l]) + eps)
 				for k, id := range rows[i].ids {
