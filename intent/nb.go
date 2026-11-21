@@ -66,7 +66,7 @@ func TrainNaiveBayes(examples []Example) *NaiveBayes {
 }
 
 // Predict returns the most likely label and its posterior probability.
-func (nb *NaiveBayes) Predict(tokens []string) (string, float64) {
+func (nb *NaiveBayes) Predict(tokens []string) (label string, confidence float64) {
 	feats := features(tokens)
 	scores := make([]float64, len(nb.labels))
 	best := 0

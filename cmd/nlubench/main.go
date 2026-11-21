@@ -53,7 +53,7 @@ func main() {
 }
 
 func download(url, dst string) error {
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := os.Stat(dst); err == nil { //nolint:gosec // dst is built from the -dir flag and fixed names
 		return nil
 	}
 	resp, err := http.Get(url) //nolint:gosec // fixed benchmark URLs
@@ -64,10 +64,10 @@ func download(url, dst string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s: %s", url, resp.Status)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil { //nolint:gosec // dst is built from the -dir flag and fixed names
 		return err
 	}
-	f, err := os.Create(dst)
+	f, err := os.Create(dst) //nolint:gosec // dst is built from the -dir flag and fixed names
 	if err != nil {
 		return err
 	}
@@ -94,7 +94,7 @@ func fetch(dir string) error {
 }
 
 func load(path string, parse func(io.Reader) ([]nlu.Utterance, error)) ([]nlu.Utterance, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path is built from the -dir flag and fixed names
 	if err != nil {
 		return nil, fmt.Errorf("%w (run `nlubench fetch` first)", err)
 	}
@@ -143,7 +143,7 @@ func report(name string, train, test []nlu.Utterance) {
 		ex[i] = intent.Example{Tokens: u.Tokens, Label: u.Intent}
 	}
 	nb := intent.TrainNaiveBayes(ex)
-	var got, want []string
+	got, want := make([]string, 0, len(test)), make([]string, 0, len(test))
 	for _, u := range test {
 		l, _ := nb.Predict(u.Tokens)
 		got, want = append(got, l), append(want, u.Intent)
