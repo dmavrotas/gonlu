@@ -4,6 +4,8 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+
+	"github.com/dmavrotas/gonlu/nlu"
 )
 
 // Classifier predicts an intent label and a confidence in (0,1] for tokens.
@@ -18,6 +20,9 @@ type LogRegOptions struct {
 	L2           float64 // weight decay on active features; default 1e-4
 	MaxN         int     // longest word n-gram; default 2
 	CharN        int     // if >0, add character n-grams of this length; default 0
+	// TypoAugment, when >0, also trains on a copy of the data in which that
+	// fraction of words carries a typo.
+	TypoAugment float64
 }
 
 func (o LogRegOptions) withDefaults() LogRegOptions {
@@ -89,6 +94,9 @@ func TrainLogReg(examples []Example, opts LogRegOptions) *LogReg {
 		return nil
 	}
 	opts = opts.withDefaults()
+	if opts.TypoAugment > 0 {
+		examples = withTypos(examples, opts.TypoAugment)
+	}
 	m := &LogReg{opts: opts, feat: map[string]int{}}
 	labelSet := map[string]struct{}{}
 	for _, e := range examples {
@@ -198,4 +206,17 @@ func join(ss []string) string {
 		b = append(b, s...)
 	}
 	return string(b)
+}
+
+// withTypos returns examples followed by typo-corrupted copies of themselves.
+func withTypos(examples []Example, rate float64) []Example {
+	us := make([]nlu.Utterance, len(examples))
+	for i, e := range examples {
+		us[i] = nlu.Utterance{Tokens: e.Tokens, Intent: e.Label}
+	}
+	out := append([]Example(nil), examples...)
+	for _, u := range nlu.AddTypos(us, rate, 3) {
+		out = append(out, Example{Tokens: u.Tokens, Label: u.Intent})
+	}
+	return out
 }

@@ -86,3 +86,17 @@ func TestNgramFeatures(t *testing.T) {
 		t.Errorf("char features = %v", chars)
 	}
 }
+
+func TestLogRegTypoAugmentKeepsCleanAccuracyAndHandlesTypos(t *testing.T) {
+	m := TrainLogReg(smallSet(), LogRegOptions{CharN: 3, TypoAugment: 0.5})
+	tests := []struct{ in, want string }{
+		{"weather in london", "weather"},
+		{"wether in london", "weather"}, // typo
+		{"paly some rock", "music"},     // typo
+	}
+	for _, tt := range tests {
+		if got, _ := m.Predict(nlu.Tokenize(tt.in)); got != tt.want {
+			t.Errorf("Predict(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

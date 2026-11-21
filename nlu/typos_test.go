@@ -1,29 +1,27 @@
-package dataset
+package nlu
 
 import (
 	"reflect"
 	"testing"
-
-	"github.com/dmavrotas/gonlu/nlu"
 )
 
-func sample() []nlu.Utterance {
-	return []nlu.Utterance{
+func sample() []Utterance {
+	return []Utterance{
 		{Tokens: []string{"show", "flights", "from", "boston", "to", "denver"}, Intent: "flight",
-			Slots: []nlu.Span{{Start: 3, End: 4, Label: "from"}}},
+			Slots: []Span{{Start: 3, End: 4, Label: "from"}}},
 	}
 }
 
-func TestPerturbZeroRateIsIdentity(t *testing.T) {
+func TestAddTyposZeroRateIsIdentity(t *testing.T) {
 	in := sample()
-	if got := Perturb(in, 0, 1); !reflect.DeepEqual(got, in) {
+	if got := AddTypos(in, 0, 1); !reflect.DeepEqual(got, in) {
 		t.Errorf("rate 0 changed data: %v", got)
 	}
 }
 
-func TestPerturbFullRateChangesLongWordsOnly(t *testing.T) {
+func TestAddTyposFullRateChangesLongWordsOnly(t *testing.T) {
 	in := sample()
-	got := Perturb(in, 1, 1)[0]
+	got := AddTypos(in, 1, 1)[0]
 	for i, tok := range in[0].Tokens {
 		if len(tok) <= 3 && got.Tokens[i] != tok {
 			t.Errorf("short token %q was changed to %q", tok, got.Tokens[i])
@@ -43,10 +41,10 @@ func TestPerturbFullRateChangesLongWordsOnly(t *testing.T) {
 	}
 }
 
-func TestPerturbDeterministicAndNonMutating(t *testing.T) {
+func TestAddTyposDeterministicAndNonMutating(t *testing.T) {
 	in := sample()
 	orig := append([]string(nil), in[0].Tokens...)
-	a, b := Perturb(in, 0.5, 42), Perturb(in, 0.5, 42)
+	a, b := AddTypos(in, 0.5, 42), AddTypos(in, 0.5, 42)
 	if !reflect.DeepEqual(a, b) {
 		t.Error("same seed must give same output")
 	}
