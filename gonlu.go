@@ -1,0 +1,102 @@
+// Package gonlu is a small, deterministic, offline natural-language-understanding
+// toolkit: it classifies the intent of a sentence and extracts its slots
+// (entities), with no network calls, no cgo and no model files.
+//
+// Train a model from annotated examples and parse new text:
+//
+//	data := []nlu.Utterance{
+//		nlu.ParseAnnotated("book a table in [city : rome] for [party : two]", "book_table"),
+//		nlu.ParseAnnotated("what is the weather in [city : paris]", "get_weather"),
+//		// ... more examples
+//	}
+//	model, err := gonlu.Train(data, gonlu.Options{})
+//	res := model.Parse("book a table in oslo for four")
+//	// res.Intent == "book_table"; res.Slots holds city=oslo, party=four
+package gonlu
+
+import (
+	"errors"
+	"strings"
+
+	"github.com/dmavrotas/gonlu/intent"
+	"github.com/dmavrotas/gonlu/nlu"
+	"github.com/dmavrotas/gonlu/slot"
+)
+
+// Options configures Train. The zero value gives the benchmark-default model.
+type Options struct {
+	// Robust trains for noisy, human-typed input: character n-grams plus
+	// typo-augmented training data. It costs about 0.5-1 point of accuracy on
+	// clean text and recovers much more on text with misspellings.
+	Robust bool
+	// Entries supplies known entity values per slot type, for example
+	// {"driver": {"Lewis Hamilton", "Max Verstappen"}}. They are matched
+	// typo-tolerantly and help label values never seen in the training data.
+	Entries map[string][]string
+	// Epochs overrides the number of slot-tagger training epochs (default 10).
+	Epochs int
+}
+
+// Slot is one extracted entity.
+type Slot struct {
+	Label      string // slot type, for example "city"
+	Text       string // the matched tokens joined by spaces (lower-cased)
+	Start, End int    // token offsets into the tokenised input; End is exclusive
+}
+
+// Result is the parse of one sentence.
+type Result struct {
+	Intent     string  // empty when the model was trained without intents
+	Confidence float64 // probability of Intent in (0,1]; 0 when there is no intent
+	Tokens     []string
+	Slots      []Slot
+}
+
+// Model is a trained intent classifier and slot tagger. It is safe for
+// concurrent use after Train returns.
+type Model struct {
+	clf    *intent.LogReg
+	tagger *slot.Tagger
+}
+
+// ErrNoData is returned by Train when there are no training utterances.
+var ErrNoData = errors.New("gonlu: no training data")
+
+// Train fits a model. Utterances with an empty Intent are ignored by the intent
+// classifier, and utterances without slots simply teach the tagger that
+// nothing should be extracted.
+func Train(data []nlu.Utterance, opts Options) (*Model, error) {
+	if len(data) == 0 {
+		return nil, ErrNoData
+	}
+	lo := intent.LogRegOptions{}
+	so := slot.Options{Epochs: opts.Epochs, Entries: opts.Entries}
+	if opts.Robust {
+		lo.CharN, lo.TypoAugment = 3, 0.3
+		so.CharFeatures, so.TypoAugment = true, 0.3
+	}
+
+	var ex []intent.Example
+	for _, u := range data {
+		if u.Intent != "" {
+			ex = append(ex, intent.Example{Tokens: u.Tokens, Label: u.Intent})
+		}
+	}
+	return &Model{clf: intent.TrainLogReg(ex, lo), tagger: slot.TrainOptions(data, so)}, nil
+}
+
+// Parse classifies text and extracts its slots.
+func (m *Model) Parse(text string) Result {
+	toks := nlu.Tokenize(text)
+	res := Result{Tokens: toks}
+	if len(toks) == 0 {
+		return res
+	}
+	if m.clf != nil {
+		res.Intent, res.Confidence = m.clf.Predict(toks)
+	}
+	for _, s := range m.tagger.Tag(toks) {
+		res.Slots = append(res.Slots, Slot{Label: s.Label, Text: strings.Join(toks[s.Start:s.End], " "), Start: s.Start, End: s.End})
+	}
+	return res
+}

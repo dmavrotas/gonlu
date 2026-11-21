@@ -1,19 +1,15 @@
-package dataset
+package nlu
 
-import (
-	"math/rand"
+import "math/rand"
 
-	"github.com/dmavrotas/gonlu/nlu"
-)
-
-// Perturb returns a copy of data in which each token longer than three bytes is,
+// AddTypos returns a copy of data in which each token longer than three bytes is,
 // with probability rate, corrupted by a deletion or an adjacent transposition.
 // Intents, slot spans and token counts are preserved, so gold labels stay valid.
-// The same seed always yields the same output. It is used to measure robustness
-// to typos.
-func Perturb(data []nlu.Utterance, rate float64, seed int64) []nlu.Utterance {
+// The same seed always yields the same output. It is used both to measure
+// robustness to typos and to augment training data.
+func AddTypos(data []Utterance, rate float64, seed int64) []Utterance {
 	r := rand.New(rand.NewSource(seed)) //nolint:gosec // reproducible noise, not security
-	out := make([]nlu.Utterance, len(data))
+	out := make([]Utterance, len(data))
 	for i, u := range data {
 		toks := append([]string(nil), u.Tokens...)
 		for j, t := range toks {
@@ -29,7 +25,7 @@ func Perturb(data []nlu.Utterance, rate float64, seed int64) []nlu.Utterance {
 				toks[j] = string(b)
 			}
 		}
-		out[i] = nlu.Utterance{Tokens: toks, Intent: u.Intent, Slots: u.Slots}
+		out[i] = Utterance{Tokens: toks, Intent: u.Intent, Slots: u.Slots}
 	}
 	return out
 }

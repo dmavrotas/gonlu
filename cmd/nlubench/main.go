@@ -1,18 +1,13 @@
 // Command nlubench downloads public NLU benchmarks and scores the library on them.
 //
-//	nlubench fetch [-dir data]   download ATIS and SNIPS
-//	nlubench run   [-dir data]   evaluate and print a report
+//	nlubench fetch [-dir data]                         download all benchmarks
+//	nlubench run   [-dir data] [-only a,b] [-typo 0.3]  evaluate and print a report
 package main
 
 import (
-	"flag"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"path/filepath"
 
-	"github.com/dmavrotas/gonlu/bench/dataset"
 	"github.com/dmavrotas/gonlu/bench/metrics"
 	"github.com/dmavrotas/gonlu/intent"
 	"github.com/dmavrotas/gonlu/nlu"
@@ -21,34 +16,21 @@ import (
 
 const slotEpochs = 10
 
-const (
-	atisBase  = "https://raw.githubusercontent.com/yvchen/JointSLU/master/data/"
-	snipsBase = "https://raw.githubusercontent.com/snipsco/nlu-benchmark/master/2017-06-custom-intent-engines/"
-)
-
-var (
-	atisFiles   = []string{"atis.train.w-intent.iob", "atis.test.w-intent.iob"}
-	snipsIntent = []string{"AddToPlaylist", "BookRestaurant", "GetWeather", "PlayMusic", "RateBook", "SearchCreativeWork", "SearchScreeningEvent"}
-)
-
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: nlubench fetch|run [-dir data]")
+		fmt.Fprintln(os.Stderr, "usage: nlubench fetch|run [-dir data] [-only names] [-typo rate]")
 		os.Exit(2)
 	}
-	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
-	dir := fs.String("dir", "data", "dataset directory")
-	typo := fs.Float64("typo", 0, "fraction of test words to corrupt with typos (robustness check)")
-	_ = fs.Parse(os.Args[2:])
-
-	var err error
-	switch os.Args[1] {
-	case "fetch":
-		err = fetch(*dir)
-	case "run":
-		err = run(*dir, *typo)
-	default:
-		err = fmt.Errorf("unknown command %q", os.Args[1])
+	opts, err := parseFlags(os.Args[2:])
+	if err == nil {
+		switch os.Args[1] {
+		case "fetch":
+			err = fetch(opts)
+		case "run":
+			err = run(opts)
+		default:
+			err = fmt.Errorf("unknown command %q", os.Args[1])
+		}
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -56,122 +38,84 @@ func main() {
 	}
 }
 
-func download(url, dst string) error {
-	if _, err := os.Stat(dst); err == nil { //nolint:gosec // dst is built from the -dir flag and fixed names
-		return nil
-	}
-	resp, err := http.Get(url) //nolint:gosec // fixed benchmark URLs
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: %s", url, resp.Status)
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil { //nolint:gosec // dst is built from the -dir flag and fixed names
-		return err
-	}
-	f, err := os.Create(dst) //nolint:gosec // dst is built from the -dir flag and fixed names
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	_, err = io.Copy(f, resp.Body)
-	return err
+// profile bundles the intent and slot settings evaluated together.
+type profile struct {
+	name   string
+	intent intent.LogRegOptions
+	slot   slot.Options
 }
 
-func fetch(dir string) error {
-	for _, f := range atisFiles {
-		if err := download(atisBase+f, filepath.Join(dir, "atis", f)); err != nil {
-			return err
-		}
-	}
-	for _, in := range snipsIntent {
-		for _, f := range []string{"train_" + in + "_full.json", "validate_" + in + ".json"} {
-			if err := download(snipsBase+in+"/"+f, filepath.Join(dir, "snips", f)); err != nil {
-				return err
-			}
-		}
-	}
-	fmt.Println("datasets ready in", dir)
-	return nil
+var profiles = []profile{
+	{"default", intent.LogRegOptions{}, slot.Options{Epochs: slotEpochs}},
+	{"robust", intent.LogRegOptions{CharN: 3, TypoAugment: 0.3},
+		slot.Options{Epochs: slotEpochs, CharFeatures: true, TypoAugment: 0.3}},
+	{"robust+gaz", intent.LogRegOptions{CharN: 3, TypoAugment: 0.3},
+		slot.Options{Epochs: slotEpochs, CharFeatures: true, TypoAugment: 0.3, Gazetteer: true}},
 }
 
-func load(path string, parse func(io.Reader) ([]nlu.Utterance, error)) ([]nlu.Utterance, error) {
-	f, err := os.Open(path) //nolint:gosec // path is built from the -dir flag and fixed names
-	if err != nil {
-		return nil, fmt.Errorf("%w (run `nlubench fetch` first)", err)
-	}
-	defer func() { _ = f.Close() }()
-	return parse(f)
-}
-
-func loadSnips(dir, prefix, suffix string) ([]nlu.Utterance, error) {
-	var all []nlu.Utterance
-	for _, in := range snipsIntent {
-		us, err := load(filepath.Join(dir, "snips", prefix+in+suffix), dataset.ParseSnips)
+func run(o options) error {
+	fmt.Printf("%-10s %-10s %6s %6s %11s %8s %9s\n", "dataset", "profile", "train", "test", "intent-acc", "slot-F1", "frame-acc")
+	bs := selected(o.only)
+	for i := range bs {
+		b := &bs[i]
+		train, test, err := b.load(o.dir)
 		if err != nil {
-			return nil, err
+			return fmt.Errorf("%s: %w (run `nlubench fetch` first)", b.name, err)
 		}
-		all = append(all, us...)
+		if o.typo > 0 {
+			test = nlu.AddTypos(test, o.typo, 7)
+		}
+		for i := range profiles {
+			p := &profiles[i]
+			if p.slot.Gazetteer && !b.slots {
+				continue // gazetteer features only affect slot filling
+			}
+			report(b, p, train, test)
+		}
 	}
-	return all, nil
-}
-
-func run(dir string, typo float64) error {
-	atisTrain, err := load(filepath.Join(dir, "atis", atisFiles[0]), dataset.ParseATIS)
-	if err != nil {
-		return err
-	}
-	atisTest, err := load(filepath.Join(dir, "atis", atisFiles[1]), dataset.ParseATIS)
-	if err != nil {
-		return err
-	}
-	snipsTrain, err := loadSnips(dir, "train_", "_full.json")
-	if err != nil {
-		return err
-	}
-	snipsTest, err := loadSnips(dir, "validate_", ".json")
-	if err != nil {
-		return err
-	}
-	if typo > 0 {
-		atisTest, snipsTest = dataset.Perturb(atisTest, typo, 7), dataset.Perturb(snipsTest, typo, 7)
-		fmt.Printf("test words corrupted at rate %.2f\n", typo)
-	}
-	fmt.Printf("%-8s %-12s %6s %6s %11s %8s %9s\n", "dataset", "intent-model", "train", "test", "intent-acc", "slot-F1", "frame-acc")
-	report("ATIS", atisTrain, atisTest)
-	report("SNIPS", snipsTrain, snipsTest)
 	return nil
 }
 
-func report(name string, train, test []nlu.Utterance) {
-	ex := make([]intent.Example, len(train))
-	for i, u := range train {
-		ex[i] = intent.Example{Tokens: u.Tokens, Label: u.Intent}
-	}
-	tagger := slot.Train(train, slotEpochs)
-	gotS, wantS := make([][]nlu.Span, 0, len(test)), make([][]nlu.Span, 0, len(test))
-	wantI := make([]string, 0, len(test))
-	for _, u := range test {
-		gotS, wantS, wantI = append(gotS, tagger.Tag(u.Tokens)), append(wantS, u.Slots), append(wantI, u.Intent)
-	}
-	slotF1 := 100 * metrics.SlotF1(gotS, wantS).F1
-
-	models := []struct {
-		name string
-		clf  intent.Classifier
-	}{
-		{"logreg", intent.TrainLogReg(ex, intent.LogRegOptions{})},
-		{"logreg+char3", intent.TrainLogReg(ex, intent.LogRegOptions{CharN: 3})},
-	}
-	for _, m := range models {
-		gotI := make([]string, 0, len(test))
-		for _, u := range test {
-			l, _ := m.clf.Predict(u.Tokens)
-			gotI = append(gotI, l)
+func report(b *benchmark, p *profile, train, test []nlu.Utterance) {
+	var gotI, wantI []string
+	var gotS, wantS [][]nlu.Span
+	var clf intent.Classifier
+	var tagger *slot.Tagger
+	if b.intents {
+		ex := make([]intent.Example, len(train))
+		for i, u := range train {
+			ex[i] = intent.Example{Tokens: u.Tokens, Label: u.Intent}
 		}
-		fmt.Printf("%-8s %-12s %6d %6d %10.2f%% %7.2f%% %8.2f%%\n", name, m.name, len(train), len(test),
-			100*metrics.Accuracy(gotI, wantI), slotF1, 100*metrics.FrameAccuracy(gotI, wantI, gotS, wantS))
+		clf = intent.TrainLogReg(ex, p.intent)
 	}
+	if b.slots {
+		tagger = slot.TrainOptions(train, p.slot)
+	}
+	for _, u := range test {
+		if clf != nil {
+			l, _ := clf.Predict(u.Tokens)
+			gotI, wantI = append(gotI, l), append(wantI, u.Intent)
+		}
+		if tagger != nil {
+			gotS, wantS = append(gotS, tagger.Tag(u.Tokens)), append(wantS, u.Slots)
+		}
+	}
+	cell := func(ok bool, v float64) string {
+		if !ok {
+			return "-"
+		}
+		return fmt.Sprintf("%.2f%%", 100*v)
+	}
+	var acc, f1, frame float64
+	if b.intents {
+		acc = metrics.Accuracy(gotI, wantI)
+	}
+	if b.slots {
+		f1 = metrics.SlotF1(gotS, wantS).F1
+	}
+	if b.intents && b.slots {
+		frame = metrics.FrameAccuracy(gotI, wantI, gotS, wantS)
+	}
+	fmt.Printf("%-10s %-10s %6d %6d %11s %8s %9s\n", b.name, p.name, len(train), len(test),
+		cell(b.intents, acc), cell(b.slots, f1), cell(b.intents && b.slots, frame))
 }
