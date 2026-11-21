@@ -87,7 +87,7 @@ others); they come from `Entries`:
 ```
 
 The last two contain typos (`hamliton`, `wnis`) and are still understood and linked. Linking prefers
-an exact full entry, then an exact word of an entry (a surname), then a typo-tolerant match. When
+the whole entry, then its last word (a surname, which beats a forename), then earlier words, each exact before typo-tolerant. When
 several entries match equally well, the one **listed first** wins, so list the important ones first
 (for example drivers ordered by career length).
 

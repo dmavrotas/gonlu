@@ -112,8 +112,8 @@ func (m *Model) Parse(text string) Result {
 
 // Link resolves text to the closest value in Options.Entries for the given slot
 // type, the same lookup Parse uses to fill Slot.Entry. It also returns the match
-// cost, lower being better: 0 for an exact full entry, 1 for an exact word of an
-// entry (a surname), then 2 and 3 for the same with a typo (each edit adds 2).
+// cost, lower being better: 0 for the whole entry, 1 for its last word (a
+// surname), 2 for any earlier word (a forename), and each typo edit adds 3.
 // ok is false when the type has no entries or nothing is close enough.
 //
 // Parse links a slot only within the type the tagger chose. Link lets a caller

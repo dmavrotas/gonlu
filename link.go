@@ -55,8 +55,8 @@ func maxEdits(n int) int {
 }
 
 // link returns the best entry for text, or "" when nothing is close enough.
-// Preference order: exact full entry, exact word of an entry, typo-tolerant
-// full entry, typo-tolerant word of an entry; ties go to the earlier entry.
+// Preference order: the whole entry, its last word, any earlier word, each first
+// exactly and then with typos; ties go to the earlier entry.
 func (l *linker) link(label, text string) string {
 	entry, _, _ := l.best(label, text)
 	return entry
@@ -85,17 +85,29 @@ func (l *linker) best(label, text string) (entry string, cost int, ok bool) {
 // noMatch is the cost of an entry that is not close enough.
 const noMatch = 1 << 30
 
-// entryCost scores how well text matches an entry (lower is better, large is
-// no match). Full-entry matches cost 2*d, word matches 2*d+1, so an exact full
-// entry beats an exact word, which beats any one-typo match.
+// entryCost scores how well text matches an entry (lower is better, noMatch is
+// no match). The base cost depends on what matched: the whole entry 0, the last
+// word 1, any earlier word 2. The last word wins over earlier ones because it is
+// the identifying part of a name ("Hamilton" in "Lewis Hamilton", whereas a
+// match on "Wilson" in "Wilson Fittipaldi" is a forename and must not beat a
+// driver whose surname is Wilson). Every edit adds 3, so the three base levels
+// never overlap: any exact match beats any typo.
 func entryCost(e linkEntry, text string, budget int) int {
 	cost := noMatch
 	if d := editDistance(text, e.norm); d <= budget {
-		cost = 2 * d
+		cost = 3 * d
 	}
-	for _, w := range e.tokens {
-		if d := editDistance(text, w); d <= budget && 2*d+1 < cost {
-			cost = 2*d + 1
+	for i, w := range e.tokens {
+		d := editDistance(text, w)
+		if d > budget {
+			continue
+		}
+		c := 3*d + 2
+		if i == len(e.tokens)-1 {
+			c = 3*d + 1
+		}
+		if c < cost {
+			cost = c
 		}
 	}
 	return cost
