@@ -38,6 +38,7 @@ func main() {
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	dir := fs.String("dir", "data", "dataset directory")
+	typo := fs.Float64("typo", 0, "fraction of test words to corrupt with typos (robustness check)")
 	_ = fs.Parse(os.Args[2:])
 
 	var err error
@@ -45,7 +46,7 @@ func main() {
 	case "fetch":
 		err = fetch(*dir)
 	case "run":
-		err = run(*dir)
+		err = run(*dir, *typo)
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -117,7 +118,7 @@ func loadSnips(dir, prefix, suffix string) ([]nlu.Utterance, error) {
 	return all, nil
 }
 
-func run(dir string) error {
+func run(dir string, typo float64) error {
 	atisTrain, err := load(filepath.Join(dir, "atis", atisFiles[0]), dataset.ParseATIS)
 	if err != nil {
 		return err
@@ -134,7 +135,11 @@ func run(dir string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%-8s %6s %6s %11s %8s %9s\n", "dataset", "train", "test", "intent-acc", "slot-F1", "frame-acc")
+	if typo > 0 {
+		atisTest, snipsTest = dataset.Perturb(atisTest, typo, 7), dataset.Perturb(snipsTest, typo, 7)
+		fmt.Printf("test words corrupted at rate %.2f\n", typo)
+	}
+	fmt.Printf("%-8s %-12s %6s %6s %11s %8s %9s\n", "dataset", "intent-model", "train", "test", "intent-acc", "slot-F1", "frame-acc")
 	report("ATIS", atisTrain, atisTest)
 	report("SNIPS", snipsTrain, snipsTest)
 	return nil
@@ -145,16 +150,28 @@ func report(name string, train, test []nlu.Utterance) {
 	for i, u := range train {
 		ex[i] = intent.Example{Tokens: u.Tokens, Label: u.Intent}
 	}
-	nb := intent.TrainNaiveBayes(ex)
 	tagger := slot.Train(train, slotEpochs)
-	gotI, wantI := make([]string, 0, len(test)), make([]string, 0, len(test))
 	gotS, wantS := make([][]nlu.Span, 0, len(test)), make([][]nlu.Span, 0, len(test))
+	wantI := make([]string, 0, len(test))
 	for _, u := range test {
-		l, _ := nb.Predict(u.Tokens)
-		gotI, wantI = append(gotI, l), append(wantI, u.Intent)
-		gotS, wantS = append(gotS, tagger.Tag(u.Tokens)), append(wantS, u.Slots)
+		gotS, wantS, wantI = append(gotS, tagger.Tag(u.Tokens)), append(wantS, u.Slots), append(wantI, u.Intent)
 	}
-	fmt.Printf("%-8s %6d %6d %10.2f%% %7.2f%% %8.2f%%\n", name, len(train), len(test),
-		100*metrics.Accuracy(gotI, wantI), 100*metrics.SlotF1(gotS, wantS).F1,
-		100*metrics.FrameAccuracy(gotI, wantI, gotS, wantS))
+	slotF1 := 100 * metrics.SlotF1(gotS, wantS).F1
+
+	models := []struct {
+		name string
+		clf  intent.Classifier
+	}{
+		{"logreg", intent.TrainLogReg(ex, intent.LogRegOptions{})},
+		{"logreg+char3", intent.TrainLogReg(ex, intent.LogRegOptions{CharN: 3})},
+	}
+	for _, m := range models {
+		gotI := make([]string, 0, len(test))
+		for _, u := range test {
+			l, _ := m.clf.Predict(u.Tokens)
+			gotI = append(gotI, l)
+		}
+		fmt.Printf("%-8s %-12s %6d %6d %10.2f%% %7.2f%% %8.2f%%\n", name, m.name, len(train), len(test),
+			100*metrics.Accuracy(gotI, wantI), slotF1, 100*metrics.FrameAccuracy(gotI, wantI, gotS, wantS))
+	}
 }
