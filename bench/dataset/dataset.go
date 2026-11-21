@@ -35,36 +35,9 @@ func ParseATIS(r io.Reader) ([]nlu.Utterance, error) {
 		intent := fields[len(fields)-1]
 		// Drop the BOS/EOS sentinels; the tag at EOS was the intent.
 		words, tags := words[1:len(words)-1], fields[1:len(fields)-1]
-		out = append(out, nlu.Utterance{Tokens: words, Intent: intent, Slots: spansFromIOB(tags)})
+		out = append(out, nlu.Utterance{Tokens: words, Intent: intent, Slots: nlu.SpansFromBIO(tags)})
 	}
 	return out, sc.Err()
-}
-
-// spansFromIOB converts IOB tags to spans. A stray I- tag starts a new span.
-func spansFromIOB(tags []string) []nlu.Span {
-	var spans []nlu.Span
-	start, label := -1, ""
-	flush := func(end int) {
-		if start >= 0 {
-			spans = append(spans, nlu.Span{Start: start, End: end, Label: label})
-			start = -1
-		}
-	}
-	for i, tag := range tags {
-		switch {
-		case strings.HasPrefix(tag, "B-"):
-			flush(i)
-			start, label = i, tag[2:]
-		case strings.HasPrefix(tag, "I-") && start >= 0 && tag[2:] == label:
-		case strings.HasPrefix(tag, "I-"):
-			flush(i)
-			start, label = i, tag[2:]
-		default:
-			flush(i)
-		}
-	}
-	flush(len(tags))
-	return spans
 }
 
 type snipsFile map[string][]struct {

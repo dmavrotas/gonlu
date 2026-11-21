@@ -12,9 +12,12 @@ go run ./cmd/nlubench fetch   # ATIS (yvchen/JointSLU) + SNIPS (snipsco/nlu-benc
 go run ./cmd/nlubench run
 ```
 
-| Version | ATIS intent acc | SNIPS intent acc | Notes |
-|---|---|---|---|
-| M0 baseline | 86.00% | 98.14% | Multinomial Naive Bayes, word uni+bigrams |
+| Version | Dataset | Intent acc | Slot F1 | Frame acc | Notes |
+|---|---|---|---|---|---|
+| M0 | ATIS | 86.00% | - | - | Naive Bayes, word uni+bigrams |
+| M0 | SNIPS | 98.14% | - | - | same |
+| M1 | ATIS | 86.00% | 93.27% | 72.90% | + averaged-perceptron BIO tagger (10 epochs) |
+| M1 | SNIPS | 98.14% | 91.49% | 80.00% | same |
 
 Reference points: published SNIPS 2017 results (Alexa, LUIS, Wit, api.ai, Snips)
 live beside the data in the benchmark repo; ATIS joint models report ~97-98% intent

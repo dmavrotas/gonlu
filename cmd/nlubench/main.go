@@ -16,7 +16,10 @@ import (
 	"github.com/dmavrotas/gonlu/bench/metrics"
 	"github.com/dmavrotas/gonlu/intent"
 	"github.com/dmavrotas/gonlu/nlu"
+	"github.com/dmavrotas/gonlu/slot"
 )
+
+const slotEpochs = 10
 
 const (
 	atisBase  = "https://raw.githubusercontent.com/yvchen/JointSLU/master/data/"
@@ -131,7 +134,7 @@ func run(dir string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%-8s %6s %6s %12s\n", "dataset", "train", "test", "intent-acc")
+	fmt.Printf("%-8s %6s %6s %11s %8s %9s\n", "dataset", "train", "test", "intent-acc", "slot-F1", "frame-acc")
 	report("ATIS", atisTrain, atisTest)
 	report("SNIPS", snipsTrain, snipsTest)
 	return nil
@@ -143,10 +146,15 @@ func report(name string, train, test []nlu.Utterance) {
 		ex[i] = intent.Example{Tokens: u.Tokens, Label: u.Intent}
 	}
 	nb := intent.TrainNaiveBayes(ex)
-	got, want := make([]string, 0, len(test)), make([]string, 0, len(test))
+	tagger := slot.Train(train, slotEpochs)
+	gotI, wantI := make([]string, 0, len(test)), make([]string, 0, len(test))
+	gotS, wantS := make([][]nlu.Span, 0, len(test)), make([][]nlu.Span, 0, len(test))
 	for _, u := range test {
 		l, _ := nb.Predict(u.Tokens)
-		got, want = append(got, l), append(want, u.Intent)
+		gotI, wantI = append(gotI, l), append(wantI, u.Intent)
+		gotS, wantS = append(gotS, tagger.Tag(u.Tokens)), append(wantS, u.Slots)
 	}
-	fmt.Printf("%-8s %6d %6d %11.2f%%\n", name, len(train), len(test), 100*metrics.Accuracy(got, want))
+	fmt.Printf("%-8s %6d %6d %10.2f%% %7.2f%% %8.2f%%\n", name, len(train), len(test),
+		100*metrics.Accuracy(gotI, wantI), 100*metrics.SlotF1(gotS, wantS).F1,
+		100*metrics.FrameAccuracy(gotI, wantI, gotS, wantS))
 }
