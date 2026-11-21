@@ -31,7 +31,9 @@ type Options struct {
 	Robust bool
 	// Entries supplies known entity values per slot type, for example
 	// {"driver": {"Lewis Hamilton", "Max Verstappen"}}. They are matched
-	// typo-tolerantly and help label values never seen in the training data.
+	// typo-tolerantly, help label values never seen in the training data, and
+	// are used to link each extracted slot to its canonical entry (Slot.Entry).
+	// List more important entries first: they win ties.
 	Entries map[string][]string
 	// Epochs overrides the number of slot-tagger training epochs (default 10).
 	Epochs int
@@ -42,6 +44,11 @@ type Slot struct {
 	Label      string // slot type, for example "city"
 	Text       string // the matched tokens joined by spaces (lower-cased)
 	Start, End int    // token offsets into the tokenised input; End is exclusive
+	// Entry is the closest value from Options.Entries for this slot's type,
+	// in its original spelling (for example "Max Verstappen" for the text
+	// "verstapen"). It is empty when no entry is close enough or the type has no
+	// entries. When several entries match equally well, the one listed first wins.
+	Entry string
 }
 
 // Result is the parse of one sentence.
@@ -57,6 +64,7 @@ type Result struct {
 type Model struct {
 	clf    *intent.LogReg
 	tagger *slot.Tagger
+	link   *linker
 }
 
 // ErrNoData is returned by Train when there are no training utterances.
@@ -82,7 +90,7 @@ func Train(data []nlu.Utterance, opts Options) (*Model, error) {
 			ex = append(ex, intent.Example{Tokens: u.Tokens, Label: u.Intent})
 		}
 	}
-	return &Model{clf: intent.TrainLogReg(ex, lo), tagger: slot.TrainOptions(data, so)}, nil
+	return &Model{clf: intent.TrainLogReg(ex, lo), tagger: slot.TrainOptions(data, so), link: newLinker(opts.Entries)}, nil
 }
 
 // Parse classifies text and extracts its slots.
@@ -96,7 +104,8 @@ func (m *Model) Parse(text string) Result {
 		res.Intent, res.Confidence = m.clf.Predict(toks)
 	}
 	for _, s := range m.tagger.Tag(toks) {
-		res.Slots = append(res.Slots, Slot{Label: s.Label, Text: strings.Join(toks[s.Start:s.End], " "), Start: s.Start, End: s.End})
+		text := strings.Join(toks[s.Start:s.End], " ")
+		res.Slots = append(res.Slots, Slot{Label: s.Label, Text: text, Start: s.Start, End: s.End, Entry: m.link.link(s.Label, text)})
 	}
 	return res
 }
