@@ -2,6 +2,8 @@
 //
 //	nlubench fetch [-dir data]                         download all benchmarks
 //	nlubench run   [-dir data] [-only a,b] [-typo 0.3]  evaluate and print a report
+//	nlubench check [-dir data] [-baseline f] [-tolerance 0.5] [-update]
+//	                                                    fail if the default profile regressed
 package main
 
 import (
@@ -25,9 +27,11 @@ func main() {
 	if err == nil {
 		switch os.Args[1] {
 		case "fetch":
-			err = fetch(opts)
+			err = fetch(&opts)
 		case "run":
-			err = run(opts)
+			err = run(&opts)
+		case "check":
+			err = check(&opts)
 		default:
 			err = fmt.Errorf("unknown command %q", os.Args[1])
 		}
@@ -46,14 +50,14 @@ type profile struct {
 }
 
 var profiles = []profile{
-	{"default", intent.LogRegOptions{}, slot.Options{Epochs: slotEpochs}},
-	{"robust", intent.LogRegOptions{CharN: 3, TypoAugment: 0.3},
+	{"default", intent.DefaultOptions(), slot.Options{Epochs: slotEpochs}},
+	{"robust", intent.RobustOptions(),
 		slot.Options{Epochs: slotEpochs, CharFeatures: true, TypoAugment: 0.3}},
-	{"robust+gaz", intent.LogRegOptions{CharN: 3, TypoAugment: 0.3},
+	{"robust+gaz", intent.RobustOptions(),
 		slot.Options{Epochs: slotEpochs, CharFeatures: true, TypoAugment: 0.3, Gazetteer: true}},
 }
 
-func run(o options) error {
+func run(o *options) error {
 	fmt.Printf("%-10s %-10s %6s %6s %11s %8s %9s\n", "dataset", "profile", "train", "test", "intent-acc", "slot-F1", "frame-acc")
 	bs := selected(o.only)
 	for i := range bs {
@@ -76,7 +80,16 @@ func run(o options) error {
 	return nil
 }
 
-func report(b *benchmark, p *profile, train, test []nlu.Utterance) {
+// scores are the metrics of one benchmark/profile, in percent. A zero value
+// means the metric does not apply (for example no slots in CLINC150).
+type scores struct {
+	Intent float64 `json:"intent,omitempty"`
+	Slot   float64 `json:"slot_f1,omitempty"`
+	Frame  float64 `json:"frame,omitempty"`
+}
+
+// evaluate trains profile p on train and scores it on test.
+func evaluate(b *benchmark, p *profile, train, test []nlu.Utterance) scores {
 	var gotI, wantI []string
 	var gotS, wantS [][]nlu.Span
 	var clf intent.Classifier
@@ -100,22 +113,27 @@ func report(b *benchmark, p *profile, train, test []nlu.Utterance) {
 			gotS, wantS = append(gotS, tagger.Tag(u.Tokens)), append(wantS, u.Slots)
 		}
 	}
+	var sc scores
+	if b.intents {
+		sc.Intent = 100 * metrics.Accuracy(gotI, wantI)
+	}
+	if b.slots {
+		sc.Slot = 100 * metrics.SlotF1(gotS, wantS).F1
+	}
+	if b.intents && b.slots {
+		sc.Frame = 100 * metrics.FrameAccuracy(gotI, wantI, gotS, wantS)
+	}
+	return sc
+}
+
+func report(b *benchmark, p *profile, train, test []nlu.Utterance) {
+	sc := evaluate(b, p, train, test)
 	cell := func(ok bool, v float64) string {
 		if !ok {
 			return "-"
 		}
-		return fmt.Sprintf("%.2f%%", 100*v)
-	}
-	var acc, f1, frame float64
-	if b.intents {
-		acc = metrics.Accuracy(gotI, wantI)
-	}
-	if b.slots {
-		f1 = metrics.SlotF1(gotS, wantS).F1
-	}
-	if b.intents && b.slots {
-		frame = metrics.FrameAccuracy(gotI, wantI, gotS, wantS)
+		return fmt.Sprintf("%.2f%%", v)
 	}
 	fmt.Printf("%-10s %-10s %6d %6d %11s %8s %9s\n", b.name, p.name, len(train), len(test),
-		cell(b.intents, acc), cell(b.slots, f1), cell(b.intents && b.slots, frame))
+		cell(b.intents, sc.Intent), cell(b.slots, sc.Slot), cell(b.intents && b.slots, sc.Frame))
 }

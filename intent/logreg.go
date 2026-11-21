@@ -13,7 +13,8 @@ type Classifier interface {
 	Predict(tokens []string) (label string, confidence float64)
 }
 
-// LogRegOptions tunes logistic-regression training. Zero values pick defaults.
+// LogRegOptions tunes logistic-regression training. The zero value is the plain
+// binary word-n-gram baseline; use DefaultOptions for the recommended setup.
 type LogRegOptions struct {
 	Epochs       int     // default 20
 	LearningRate float64 // Adagrad base rate; default 0.5
@@ -23,6 +24,43 @@ type LogRegOptions struct {
 	// TypoAugment, when >0, also trains on a copy of the data in which that
 	// fraction of words carries a typo.
 	TypoAugment float64
+	// TFIDF weights each feature by its inverse document frequency and
+	// L2-normalises every utterance's feature vector, instead of using binary
+	// features. It usually helps on many-class problems.
+	TFIDF bool
+	// ClassBalance is the exponent alpha of class-balanced loss weighting: an
+	// example of class c is weighted (N / (K*n_c))^alpha, where N is the number
+	// of examples, K the number of classes and n_c the size of class c. 0 turns
+	// it off, 1 is fully balanced. It counters a dominant class swallowing rare
+	// ones on imbalanced data (as in ATIS).
+	ClassBalance float64
+	// NormPower controls how strongly TF-IDF rows are length-normalised: each
+	// row is divided by ||x||^NormPower. 0 selects the default of 1 (full L2
+	// normalisation); a negative value disables normalisation (IDF weights
+	// only). Smaller powers keep a decisive word from being diluted by a long
+	// utterance. It has no effect unless TFIDF is set.
+	NormPower float64
+}
+
+// DefaultOptions returns the recommended configuration: TF-IDF weighting with
+// word uni/bigrams plus character trigrams, learning rate 0.25 and
+// square-root class balancing.
+//
+// Against the zero-value LogRegOptions (binary word features) it is better on
+// the dev splits of ATIS, MASSIVE, CLINC150 and BANKING77 (up to +8.5 points) and
+// within 0.2 on SNIPS, but it is 1.3 points worse on the ATIS test set, where
+// the test distribution differs from train and a dominant class swallows rare
+// intents. See the README's method notes.
+func DefaultOptions() LogRegOptions {
+	return LogRegOptions{TFIDF: true, LearningRate: 0.25, CharN: 3, ClassBalance: 0.5}
+}
+
+// RobustOptions is DefaultOptions plus typo-augmented training data, for
+// noisy, human-typed input.
+func RobustOptions() LogRegOptions {
+	o := DefaultOptions()
+	o.TypoAugment = 0.3
+	return o
 }
 
 func (o LogRegOptions) withDefaults() LogRegOptions {
@@ -47,32 +85,60 @@ type LogReg struct {
 	labels []string
 	opts   LogRegOptions
 	feat   map[string]int // feature -> column
+	idf    []float64      // per-column idf weight (nil unless TFIDF)
 	w      [][]float64    // label -> column -> weight
 	bias   []float64
 }
 
-// ids maps tokens to unique known feature columns (unknown features are dropped).
-func (m *LogReg) ids(tokens []string) []int {
+// row is a sparse feature vector: columns and their values.
+type row struct {
+	ids  []int
+	vals []float64
+}
+
+// row maps tokens to unique known feature columns (unknown features are
+// dropped). With TFIDF the values are idf weights, L2-normalised; otherwise 1.
+func (m *LogReg) row(tokens []string) row {
 	seen := map[int]struct{}{}
-	var out []int
+	var r row
 	for _, f := range ngramFeatures(tokens, m.opts.MaxN, m.opts.CharN) {
 		if id, ok := m.feat[f]; ok {
 			if _, dup := seen[id]; !dup {
 				seen[id] = struct{}{}
-				out = append(out, id)
+				r.ids = append(r.ids, id)
 			}
 		}
 	}
-	return out
+	r.vals = make([]float64, len(r.ids))
+	var norm float64
+	for i, id := range r.ids {
+		v := 1.0
+		if m.idf != nil {
+			v = m.idf[id]
+		}
+		r.vals[i] = v
+		norm += v * v
+	}
+	if m.idf != nil && norm > 0 && m.opts.NormPower >= 0 {
+		pow := m.opts.NormPower
+		if pow == 0 {
+			pow = 1
+		}
+		div := math.Pow(math.Sqrt(norm), pow)
+		for i := range r.vals {
+			r.vals[i] /= div
+		}
+	}
+	return r
 }
 
-func (m *LogReg) probs(ids []int) []float64 {
+func (m *LogReg) probs(r row) []float64 {
 	z := make([]float64, len(m.labels))
 	maxZ := math.Inf(-1)
 	for l := range m.labels {
 		s := m.bias[l]
-		for _, id := range ids {
-			s += m.w[l][id]
+		for k, id := range r.ids {
+			s += m.w[l][id] * r.vals[k]
 		}
 		z[l] = s
 		maxZ = math.Max(maxZ, s)
@@ -124,10 +190,26 @@ func TrainLogReg(examples []Example, opts LogRegOptions) *LogReg {
 	m.bias = make([]float64, len(m.labels))
 	biasAcc := make([]float64, len(m.labels))
 
-	rows := make([][]int, len(examples))
+	if opts.TFIDF {
+		m.idf = idfWeights(examples, m)
+	}
+	rows := make([]row, len(examples))
 	gold := make([]int, len(examples))
 	for i, e := range examples {
-		rows[i], gold[i] = m.ids(e.Tokens), labelIdx[e.Label]
+		rows[i], gold[i] = m.row(e.Tokens), labelIdx[e.Label]
+	}
+	classWeight := make([]float64, len(m.labels))
+	for l := range classWeight {
+		classWeight[l] = 1
+	}
+	if opts.ClassBalance > 0 {
+		counts := make([]float64, len(m.labels))
+		for _, g := range gold {
+			counts[g]++
+		}
+		for l, c := range counts {
+			classWeight[l] = math.Pow(float64(len(examples))/(float64(len(m.labels))*c), opts.ClassBalance)
+		}
 	}
 	rng := rand.New(rand.NewSource(1)) //nolint:gosec // reproducible shuffling, not security
 	order := rng.Perm(len(examples))
@@ -141,10 +223,11 @@ func TrainLogReg(examples []Example, opts LogRegOptions) *LogReg {
 				if l == gold[i] {
 					g--
 				}
+				g *= classWeight[gold[i]]
 				biasAcc[l] += g * g
 				m.bias[l] -= opts.LearningRate * g / (math.Sqrt(biasAcc[l]) + eps)
-				for _, id := range rows[i] {
-					gw := g + opts.L2*m.w[l][id]
+				for k, id := range rows[i].ids {
+					gw := g*rows[i].vals[k] + opts.L2*m.w[l][id]
 					acc[l][id] += gw * gw
 					m.w[l][id] -= opts.LearningRate * gw / (math.Sqrt(acc[l][id]) + eps)
 				}
@@ -156,7 +239,7 @@ func TrainLogReg(examples []Example, opts LogRegOptions) *LogReg {
 
 // Predict returns the most likely label and its probability.
 func (m *LogReg) Predict(tokens []string) (label string, confidence float64) {
-	p := m.probs(m.ids(tokens))
+	p := m.probs(m.row(tokens))
 	best := 0
 	for l := range p {
 		if p[l] > p[best] {
@@ -219,4 +302,26 @@ func withTypos(examples []Example, rate float64) []Example {
 		out = append(out, Example{Tokens: u.Tokens, Label: u.Intent})
 	}
 	return out
+}
+
+// idfWeights returns smoothed inverse document frequencies per feature column.
+func idfWeights(examples []Example, m *LogReg) []float64 {
+	df := make([]float64, len(m.feat))
+	for _, e := range examples {
+		seen := map[int]struct{}{}
+		for _, f := range ngramFeatures(e.Tokens, m.opts.MaxN, m.opts.CharN) {
+			if id, ok := m.feat[f]; ok {
+				if _, dup := seen[id]; !dup {
+					seen[id] = struct{}{}
+					df[id]++
+				}
+			}
+		}
+	}
+	n := float64(len(examples))
+	idf := make([]float64, len(df))
+	for i, d := range df {
+		idf[i] = math.Log((1+n)/(1+d)) + 1
+	}
+	return idf
 }

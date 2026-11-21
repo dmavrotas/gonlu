@@ -100,3 +100,100 @@ func TestLogRegTypoAugmentKeepsCleanAccuracyAndHandlesTypos(t *testing.T) {
 		}
 	}
 }
+
+func TestTFIDFLearnsAndGeneralises(t *testing.T) {
+	data := smallSet()
+	m := TrainLogReg(data, LogRegOptions{TFIDF: true})
+	for _, e := range data {
+		if got, _ := m.Predict(e.Tokens); got != e.Label {
+			t.Errorf("Predict(%v) = %q, want %q", e.Tokens, got, e.Label)
+		}
+	}
+	if got, _ := m.Predict(nlu.Tokenize("play some rock")); got != "music" {
+		t.Errorf("generalisation: got %q, want music", got)
+	}
+}
+
+func TestRowNormalisation(t *testing.T) {
+	plain := TrainLogReg(smallSet(), LogRegOptions{})
+	for _, v := range plain.row(nlu.Tokenize("play some jazz")).vals {
+		if v != 1 {
+			t.Errorf("binary feature value = %v, want 1", v)
+		}
+	}
+	tfidf := TrainLogReg(smallSet(), LogRegOptions{TFIDF: true})
+	var norm float64
+	for _, v := range tfidf.row(nlu.Tokenize("play some jazz")).vals {
+		norm += v * v
+	}
+	if norm < 0.999999 || norm > 1.000001 {
+		t.Errorf("squared L2 norm = %v, want 1", norm)
+	}
+	// NormPower < 0 disables normalisation: values are the raw idf weights.
+	raw := TrainLogReg(smallSet(), LogRegOptions{TFIDF: true, NormPower: -1}).row(nlu.Tokenize("play some jazz"))
+	var rawNorm float64
+	for _, v := range raw.vals {
+		rawNorm += v * v
+	}
+	if rawNorm <= 1.0001 {
+		t.Errorf("un-normalised squared norm = %v, expected > 1", rawNorm)
+	}
+	if r := tfidf.row(nlu.Tokenize("zzzz")); len(r.ids) != 0 {
+		t.Errorf("unknown words produced features: %+v", r)
+	}
+}
+
+func TestRecommendedOptions(t *testing.T) {
+	d := DefaultOptions()
+	if !d.TFIDF || d.CharN != 3 || d.TypoAugment != 0 || d.ClassBalance != 0.5 || d.LearningRate != 0.25 {
+		t.Errorf("DefaultOptions = %+v", d)
+	}
+	r := RobustOptions()
+	if !r.TFIDF || r.CharN != 3 || r.TypoAugment <= 0 {
+		t.Errorf("RobustOptions = %+v", r)
+	}
+	if (LogRegOptions{}).TFIDF {
+		t.Error("zero-value options must stay the binary baseline")
+	}
+	m := TrainLogReg(smallSet(), DefaultOptions())
+	if got, _ := m.Predict(nlu.Tokenize("play some rock")); got != "music" {
+		t.Errorf("default model predicted %q", got)
+	}
+}
+
+// imbalancedSet has a dominant class and a rare one that shares vocabulary.
+func imbalancedSet() []Example {
+	d := make([]Example, 0, 62)
+	for range 30 {
+		d = append(d,
+			ex("flight", "show me flights from boston to denver"),
+			ex("flight", "list flights to denver on monday"),
+		)
+	}
+	d = append(d, ex("fare", "show me the fare from boston to denver"), ex("fare", "what is the fare to denver"))
+	return d
+}
+
+func TestClassBalanceHelpsRareClass(t *testing.T) {
+	q := nlu.Tokenize("what is the fare from boston to denver")
+	plain := TrainLogReg(imbalancedSet(), LogRegOptions{TFIDF: true, LearningRate: 0.1, Epochs: 5})
+	bal := TrainLogReg(imbalancedSet(), LogRegOptions{TFIDF: true, LearningRate: 0.1, Epochs: 5, ClassBalance: 1})
+	_, pc := plain.Predict(q)
+	lp, _ := plain.Predict(q)
+	lb, cb := bal.Predict(q)
+	if lb != "fare" {
+		t.Errorf("balanced model predicted %q (%.2f), want fare; plain predicted %q (%.2f)", lb, cb, lp, pc)
+	}
+}
+
+func TestClassBalanceZeroIsUnchanged(t *testing.T) {
+	a := TrainLogReg(smallSet(), DefaultOptions())
+	o := DefaultOptions()
+	o.ClassBalance = 0
+	b := TrainLogReg(smallSet(), o)
+	la, ca := a.Predict(nlu.Tokenize("play some rock"))
+	lb, cb := b.Predict(nlu.Tokenize("play some rock"))
+	if la != lb || ca != cb {
+		t.Errorf("ClassBalance 0 changed the model: (%s,%v) vs (%s,%v)", la, ca, lb, cb)
+	}
+}
