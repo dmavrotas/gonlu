@@ -46,10 +46,10 @@ type profile struct {
 }
 
 var profiles = []profile{
-	{"default", intent.LogRegOptions{}, slot.Options{Epochs: slotEpochs}},
-	{"robust", intent.LogRegOptions{CharN: 3, TypoAugment: 0.3},
+	{"default", intent.DefaultOptions(), slot.Options{Epochs: slotEpochs}},
+	{"robust", intent.RobustOptions(),
 		slot.Options{Epochs: slotEpochs, CharFeatures: true, TypoAugment: 0.3}},
-	{"robust+gaz", intent.LogRegOptions{CharN: 3, TypoAugment: 0.3},
+	{"robust+gaz", intent.RobustOptions(),
 		slot.Options{Epochs: slotEpochs, CharFeatures: true, TypoAugment: 0.3, Gazetteer: true}},
 }
 

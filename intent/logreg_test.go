@@ -100,3 +100,54 @@ func TestLogRegTypoAugmentKeepsCleanAccuracyAndHandlesTypos(t *testing.T) {
 		}
 	}
 }
+
+func TestTFIDFLearnsAndGeneralises(t *testing.T) {
+	data := smallSet()
+	m := TrainLogReg(data, LogRegOptions{TFIDF: true})
+	for _, e := range data {
+		if got, _ := m.Predict(e.Tokens); got != e.Label {
+			t.Errorf("Predict(%v) = %q, want %q", e.Tokens, got, e.Label)
+		}
+	}
+	if got, _ := m.Predict(nlu.Tokenize("play some rock")); got != "music" {
+		t.Errorf("generalisation: got %q, want music", got)
+	}
+}
+
+func TestRowNormalisation(t *testing.T) {
+	plain := TrainLogReg(smallSet(), LogRegOptions{})
+	for _, v := range plain.row(nlu.Tokenize("play some jazz")).vals {
+		if v != 1 {
+			t.Errorf("binary feature value = %v, want 1", v)
+		}
+	}
+	tfidf := TrainLogReg(smallSet(), LogRegOptions{TFIDF: true})
+	var norm float64
+	for _, v := range tfidf.row(nlu.Tokenize("play some jazz")).vals {
+		norm += v * v
+	}
+	if norm < 0.999999 || norm > 1.000001 {
+		t.Errorf("squared L2 norm = %v, want 1", norm)
+	}
+	if r := tfidf.row(nlu.Tokenize("zzzz")); len(r.ids) != 0 {
+		t.Errorf("unknown words produced features: %+v", r)
+	}
+}
+
+func TestRecommendedOptions(t *testing.T) {
+	d := DefaultOptions()
+	if !d.TFIDF || d.CharN != 3 || d.TypoAugment != 0 {
+		t.Errorf("DefaultOptions = %+v", d)
+	}
+	r := RobustOptions()
+	if !r.TFIDF || r.CharN != 3 || r.TypoAugment <= 0 {
+		t.Errorf("RobustOptions = %+v", r)
+	}
+	if (LogRegOptions{}).TFIDF {
+		t.Error("zero-value options must stay the binary baseline")
+	}
+	m := TrainLogReg(smallSet(), DefaultOptions())
+	if got, _ := m.Predict(nlu.Tokenize("play some rock")); got != "music" {
+		t.Errorf("default model predicted %q", got)
+	}
+}

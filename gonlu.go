@@ -25,9 +25,9 @@ import (
 
 // Options configures Train. The zero value gives the benchmark-default model.
 type Options struct {
-	// Robust trains for noisy, human-typed input: character n-grams plus
-	// typo-augmented training data. It costs about 0.5-1 point of accuracy on
-	// clean text and recovers much more on text with misspellings.
+	// Robust trains for noisy, human-typed input by adding typo-augmented
+	// training data. It costs little on clean text and recovers a lot on text
+	// with misspellings.
 	Robust bool
 	// Entries supplies known entity values per slot type, for example
 	// {"driver": {"Lewis Hamilton", "Max Verstappen"}}. They are matched
@@ -69,10 +69,10 @@ func Train(data []nlu.Utterance, opts Options) (*Model, error) {
 	if len(data) == 0 {
 		return nil, ErrNoData
 	}
-	lo := intent.LogRegOptions{}
+	lo := intent.DefaultOptions()
 	so := slot.Options{Epochs: opts.Epochs, Entries: opts.Entries}
 	if opts.Robust {
-		lo.CharN, lo.TypoAugment = 3, 0.3
+		lo = intent.RobustOptions()
 		so.CharFeatures, so.TypoAugment = true, 0.3
 	}
 
