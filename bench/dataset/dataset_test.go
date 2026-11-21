@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dmavrotas/nlu/nlu"
+	"github.com/dmavrotas/gonlu/nlu"
 )
 
 func TestParseATIS(t *testing.T) {

@@ -3,7 +3,7 @@ package intent
 import (
 	"testing"
 
-	"github.com/dmavrotas/nlu/nlu"
+	"github.com/dmavrotas/gonlu/nlu"
 )
 
 func ex(label, text string) Example { return Example{Tokens: nlu.Tokenize(text), Label: label} }

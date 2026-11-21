@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/dmavrotas/nlu/nlu"
+	"github.com/dmavrotas/gonlu/nlu"
 )
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }

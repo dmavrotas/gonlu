@@ -1,4 +1,4 @@
-# nlu
+# gonlu
 
 A deterministic, offline, pure-Go natural-language-understanding toolkit (intent
 classification and slot filling), developed against public benchmarks.

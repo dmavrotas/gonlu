@@ -1,3 +1,3 @@
-module github.com/dmavrotas/nlu
+module github.com/dmavrotas/gonlu
 
 go 1.27.4

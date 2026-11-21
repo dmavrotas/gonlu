@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/dmavrotas/nlu/nlu"
+	"github.com/dmavrotas/gonlu/nlu"
 )
 
 // ParseATIS reads the ATIS ".w-intent.iob" format: tab-separated, tokens

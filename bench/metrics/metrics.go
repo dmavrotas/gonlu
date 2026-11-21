@@ -5,7 +5,7 @@ package metrics
 import (
 	"sort"
 
-	"github.com/dmavrotas/nlu/nlu"
+	"github.com/dmavrotas/gonlu/nlu"
 )
 
 // PRF holds precision, recall and F1, each in [0,1].

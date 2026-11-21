@@ -12,10 +12,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dmavrotas/nlu/bench/dataset"
-	"github.com/dmavrotas/nlu/bench/metrics"
-	"github.com/dmavrotas/nlu/intent"
-	"github.com/dmavrotas/nlu/nlu"
+	"github.com/dmavrotas/gonlu/bench/dataset"
+	"github.com/dmavrotas/gonlu/bench/metrics"
+	"github.com/dmavrotas/gonlu/intent"
+	"github.com/dmavrotas/gonlu/nlu"
 )
 
 const (
