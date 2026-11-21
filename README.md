@@ -3,7 +3,7 @@
 A deterministic, offline, pure-Go natural-language-understanding toolkit (intent
 classification and slot filling), developed against public benchmarks.
 
-Extracted from [pitwall](../pitwall)'s rule-based NLP engine. Status: early; milestone 0.
+Extracted from [pitwall](https://github.com/dmavrotas/pitwall)'s rule-based NLP engine. Status: early; milestone 0.
 
 ## Benchmarks
 
@@ -21,3 +21,13 @@ live beside the data in the benchmark repo; ATIS joint models report ~97-98% int
 accuracy and ~95-96% slot F1.
 
 ATIS multi-intent labels (`a#b`) are currently kept as single classes.
+
+## Data
+
+Benchmark datasets are downloaded on demand by `nlubench fetch` and are not
+redistributed in this repository. They remain under their own licenses
+(SNIPS: CC0; ATIS: see the source repository).
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
