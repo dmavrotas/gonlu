@@ -89,7 +89,7 @@ func fetchMassive(dir string) error {
 	}
 }
 
-func fetch(o options) error {
+func fetch(o *options) error {
 	for _, b := range selected(o.only) {
 		for _, f := range b.files {
 			if err := download(f.url, filepath.Join(o.dir, f.dst)); err != nil {

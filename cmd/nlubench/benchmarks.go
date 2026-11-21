@@ -25,13 +25,16 @@ type benchmark struct {
 }
 
 type options struct {
-	dir  string
-	only []string
-	typo float64
+	dir       string
+	only      []string
+	typo      float64
+	baseline  string
+	tolerance float64
+	update    bool
 }
 
 func parseFlags(args []string) (options, error) {
-	o := options{dir: "data"}
+	o := options{dir: "data", baseline: "bench/baseline.json", tolerance: 0.5}
 	for i := 0; i < len(args); i++ {
 		next := func() (string, error) {
 			if i+1 >= len(args) {
@@ -53,6 +56,14 @@ func parseFlags(args []string) (options, error) {
 			if v, err = next(); err == nil {
 				_, err = fmt.Sscanf(v, "%g", &o.typo)
 			}
+		case "-baseline", "--baseline":
+			o.baseline, err = next()
+		case "-tolerance", "--tolerance":
+			if v, err = next(); err == nil {
+				_, err = fmt.Sscanf(v, "%g", &o.tolerance)
+			}
+		case "-update", "--update":
+			o.update = true
 		default:
 			err = fmt.Errorf("unknown flag %q", args[i])
 		}

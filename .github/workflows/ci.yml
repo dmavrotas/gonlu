@@ -28,3 +28,27 @@ jobs:
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
+
+  benchmark-gate:
+    # Fails the build if accuracy on the default profile drops more than 0.5
+    # points below bench/baseline.json. Refresh the baseline deliberately with
+    #   go run ./cmd/nlubench check -update
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Cache benchmark datasets
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: nlu-datasets-v1-${{ hashFiles('cmd/nlubench/benchmarks.go') }}
+
+      - name: Fetch datasets
+        run: go run ./cmd/nlubench fetch -only ATIS,SNIPS,CLINC150,BANKING77
+
+      - name: Check for regressions
+        run: go run ./cmd/nlubench check
