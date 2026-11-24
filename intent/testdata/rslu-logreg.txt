@@ -1,0 +1,6 @@
+book	3fefdf176ba30e70	book a table in vienna
+weather	3fef7da95ec97b1d	weather in tokyo tomorrow
+music	3feed35999e410d0	play jazz
+music	3fd69d6e2114c9f1	
+music	3fd69d6e2114c9f1	completely unrelated words
+book	3fedc0149c6b5831	bokk a tabel
