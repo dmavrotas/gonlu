@@ -2,7 +2,8 @@
 
 A small, deterministic, **offline, pure-Go** natural-language-understanding toolkit.
 It classifies the **intent** of a sentence and extracts its **slots** (entities),
-with no network calls, no cgo, no model files and no external services.
+with no network calls, no cgo and no external services. Trained intent classifiers can be
+saved and loaded, in a format shared with the Rust port [rslu](https://github.com/dmavrotas/rslu).
 
 It was extracted from [pitwall](https://github.com/dmavrotas/pitwall), a natural-language
 query engine for Formula 1 data, and is developed against public benchmarks (ATIS, SNIPS,
@@ -143,12 +144,35 @@ filling is good but not perfect, which matches the benchmark numbers below.
 |---|---|
 | `gonlu` | `Train` / `Parse`: the simple entry point, with entity linking |
 | `nlu` | core types (`Utterance`, `Span`), `Tokenize`, `ParseAnnotated`, BIO helpers, `AddTypos` |
-| `intent` | intent classifiers: multinomial logistic regression (Adagrad, TF-IDF, char n-grams, class balancing), Naive Bayes baseline |
+| `intent` | intent classifiers: multinomial logistic regression (Adagrad, TF-IDF, char n-grams, class balancing) with save/load, Naive Bayes baseline |
 | `slot` | slot tagger: greedy averaged-perceptron BIO tagger with optional char features, typo augmentation and a typo-tolerant gazetteer |
 | `bench/...` | dataset loaders and metrics (intent accuracy, exact-match slot F1, frame accuracy) |
 | `cmd/nlubench` | downloads the public benchmarks, scores the library and gates CI |
 
 Everything is deterministic: the same data and options always give the same model.
+
+## Saving a trained intent classifier
+
+Training a few hundred sentences takes milliseconds, which is too slow for a hot path such as
+a CLI hook. Train once, save, and load where you predict:
+
+```go
+m := intent.TrainLogReg(examples, intent.DefaultOptions())
+b, err := m.MarshalBinary() // or m.WriteTo(file)
+// ... later, or in another program (for example with go:embed):
+var loaded intent.LogReg
+err = loaded.UnmarshalBinary(b) // or intent.ReadLogReg(file)
+label, confidence := loaded.Predict(nlu.Tokenize("book a table for two"))
+```
+
+A loaded model predicts exactly what the saved one did (bit-identical probabilities).
+Decoding never panics: truncated, foreign or corrupt input is an error (`ErrNotAModel`,
+`ErrUnsupportedVersion`, `ErrWrongKind`, `ErrTruncated`, `ErrCorrupt`; test with `errors.Is`).
+
+The format is the same as rslu's (spec in `intent/persist.go` and the rslu README), so a
+model saved by one library loads in the other. Tests load a model saved by rslu
+(`intent/testdata`); labels match and probabilities agree to 1e-12 (the two libraries sum
+in a different order). The slot tagger cannot be saved yet.
 
 ## Benchmarks
 
